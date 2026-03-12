@@ -134,6 +134,7 @@ const AMBIENT_SOUNDS: Record<SoundType, string> = {
 
 export default function App() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
+  const [guestMode, setGuestMode] = useState(() => localStorage.getItem('focus_guest_mode') === 'true');
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'timer' | 'tasks' | 'stats' | 'settings'>('timer');
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -178,22 +179,38 @@ export default function App() {
   }, []);
 
   const updateTheme = async (themeId: string) => {
-    if (!user) return;
-    setUserSettings(prev => ({ ...prev, themeId }));
-    try {
-      await setDoc(doc(db, 'users', user.uid), { themeId }, { merge: true });
-    } catch (e) {
-      console.error("Error updating theme", e);
+    setUserSettings(prev => {
+      const newSettings = { ...prev, themeId };
+      if (!user) {
+        localStorage.setItem('focus_settings', JSON.stringify(newSettings));
+      }
+      return newSettings;
+    });
+    
+    if (user) {
+      try {
+        await setDoc(doc(db, 'users', user.uid), { themeId }, { merge: true });
+      } catch (e) {
+        console.error("Error updating theme", e);
+      }
     }
   };
 
   const updateGoal = async (hours: number) => {
-    if (!user) return;
-    setUserSettings(prev => ({ ...prev, dailyGoalHours: hours }));
-    try {
-      await setDoc(doc(db, 'users', user.uid), { dailyGoalHours: hours }, { merge: true });
-    } catch (e) {
-      console.error("Error updating goal", e);
+    setUserSettings(prev => {
+      const newSettings = { ...prev, dailyGoalHours: hours };
+      if (!user) {
+        localStorage.setItem('focus_settings', JSON.stringify(newSettings));
+      }
+      return newSettings;
+    });
+
+    if (user) {
+      try {
+        await setDoc(doc(db, 'users', user.uid), { dailyGoalHours: hours }, { merge: true });
+      } catch (e) {
+        console.error("Error updating goal", e);
+      }
     }
   };
 
@@ -208,34 +225,46 @@ export default function App() {
 
   // Firestore Listeners
   useEffect(() => {
-    if (!user) return;
+    if (!user && !guestMode) return;
 
-    const tasksQuery = query(
-      collection(db, 'tasks'),
-      where('userId', '==', user.uid),
-      orderBy('createdAt', 'desc')
-    );
+    if (user) {
+      const tasksQuery = query(
+        collection(db, 'tasks'),
+        where('userId', '==', user.uid),
+        orderBy('createdAt', 'desc')
+      );
 
-    const sessionsQuery = query(
-      collection(db, 'focus_sessions'),
-      where('userId', '==', user.uid),
-      orderBy('startTime', 'desc'),
-      limit(500)
-    );
+      const sessionsQuery = query(
+        collection(db, 'focus_sessions'),
+        where('userId', '==', user.uid),
+        orderBy('startTime', 'desc'),
+        limit(500)
+      );
 
-    const unsubTasks = onSnapshot(tasksQuery, (snapshot) => {
-      setTasks(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Task)));
-    });
+      const unsubTasks = onSnapshot(tasksQuery, (snapshot) => {
+        setTasks(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Task)));
+      });
 
-    const unsubSessions = onSnapshot(sessionsQuery, (snapshot) => {
-      setSessions(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as FocusSession)));
-    });
+      const unsubSessions = onSnapshot(sessionsQuery, (snapshot) => {
+        setSessions(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as FocusSession)));
+      });
 
-    return () => {
-      unsubTasks();
-      unsubSessions();
-    };
-  }, [user]);
+      return () => {
+        unsubTasks();
+        unsubSessions();
+      };
+    } else {
+      // Guest Mode: Load from LocalStorage
+      const localTasks = JSON.parse(localStorage.getItem('focus_tasks') || '[]');
+      const localSessions = JSON.parse(localStorage.getItem('focus_sessions') || '[]');
+      setTasks(localTasks);
+      setSessions(localSessions);
+      
+      // Load settings
+      const localSettings = JSON.parse(localStorage.getItem('focus_settings') || '{"themeId":"forest","dailyGoalHours":4}');
+      setUserSettings(localSettings);
+    }
+  }, [user, guestMode]);
 
   // Ambient Sound Control
   useEffect(() => {
@@ -265,9 +294,75 @@ export default function App() {
     );
   }
 
-  if (!user) {
-    return <LoginScreen />;
+  if (!user && !guestMode) {
+    return <LoginScreen onGuest={() => {
+      setGuestMode(true);
+      localStorage.setItem('focus_guest_mode', 'true');
+    }} />;
   }
+
+  const effectiveUserId = user?.uid || 'guest-user';
+
+  const addSession = async (sessionData: any) => {
+    if (user) {
+      await addDoc(collection(db, 'focus_sessions'), {
+        ...sessionData,
+        userId: user.uid,
+        createdAt: serverTimestamp()
+      });
+    } else {
+      const newSession = {
+        ...sessionData,
+        id: Math.random().toString(36).substr(2, 9),
+        userId: 'guest-user',
+        startTime: { toDate: () => new Date(sessionData.startTime) }, // Mock Firestore timestamp
+        createdAt: new Date().toISOString()
+      };
+      const updated = [newSession, ...sessions];
+      setSessions(updated);
+      localStorage.setItem('focus_sessions', JSON.stringify(updated));
+    }
+  };
+
+  const addTaskAction = async (taskData: any) => {
+    if (user) {
+      await addDoc(collection(db, 'tasks'), {
+        ...taskData,
+        userId: user.uid,
+        createdAt: serverTimestamp()
+      });
+    } else {
+      const newTask = {
+        ...taskData,
+        id: Math.random().toString(36).substr(2, 9),
+        userId: 'guest-user',
+        createdAt: new Date().toISOString()
+      };
+      const updated = [newTask, ...tasks];
+      setTasks(updated);
+      localStorage.setItem('focus_tasks', JSON.stringify(updated));
+    }
+  };
+
+  const updateTaskAction = async (taskId: string, updates: any) => {
+    if (user) {
+      await updateDoc(doc(db, 'tasks', taskId), updates);
+    } else {
+      const updated = tasks.map(t => t.id === taskId ? { ...t, ...updates } : t);
+      setTasks(updated);
+      localStorage.setItem('focus_tasks', JSON.stringify(updated));
+    }
+  };
+
+  const deleteTaskAction = async (taskId: string) => {
+    if (user) {
+      await deleteDoc(doc(db, 'tasks', taskId));
+    } else {
+      const updated = tasks.filter(t => t.id !== taskId);
+      setTasks(updated);
+      localStorage.setItem('focus_tasks', JSON.stringify(updated));
+    }
+  };
 
   return (
     <div className={cn(
@@ -335,7 +430,14 @@ export default function App() {
             />
             <div className="w-px h-4 bg-white/10 mx-2" />
             <button 
-              onClick={logOut}
+              onClick={() => {
+                if (user) {
+                  logOut();
+                } else {
+                  setGuestMode(false);
+                  localStorage.removeItem('focus_guest_mode');
+                }
+              }}
               className="p-3 rounded-full text-zinc-500 hover:text-rose-400 hover:bg-rose-400/10 transition-all"
             >
               <LogOut size={20} />
@@ -368,7 +470,7 @@ export default function App() {
               <span className="text-sm font-bold">{calculateStreak(sessions)} Day Streak</span>
             </div>
             <div className="w-10 h-10 rounded-full border border-white/10 overflow-hidden">
-              <img src={user.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.email}`} alt="User" />
+              <img src={user?.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user?.email || 'guest'}`} alt="User" />
             </div>
           </div>
         </header>
@@ -399,6 +501,7 @@ export default function App() {
                   isFullscreen={isFullscreen}
                   onToggleFullscreen={() => setIsFullscreen(!isFullscreen)}
                   theme={currentTheme}
+                  onComplete={addSession}
                 />
                 
                 {!isFullscreen && (
@@ -535,6 +638,9 @@ export default function App() {
                   setSelectedTaskId(id);
                   setActiveTab('timer');
                 }}
+                onAddTask={addTaskAction}
+                onUpdateTask={updateTaskAction}
+                onDeleteTask={deleteTaskAction}
               />
             </motion.div>
           )}
@@ -674,7 +780,7 @@ export default function App() {
 
 // --- Sub-components ---
 
-function LoginScreen() {
+function LoginScreen({ onGuest }: { onGuest: () => void }) {
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -736,6 +842,13 @@ function LoginScreen() {
           )}
           {isLoggingIn ? 'Authenticating...' : 'Continue with Google'}
         </button>
+
+        <button 
+          onClick={onGuest}
+          className="mt-6 text-zinc-500 hover:text-zinc-300 transition-colors font-medium"
+        >
+          Continue as Guest (Local Only)
+        </button>
       </motion.div>
     </div>
   );
@@ -776,7 +889,7 @@ function SoundButton({ active, onClick, icon, label }: { active: boolean, onClic
   );
 }
 
-function Timer({ user, selectedTask, isFullscreen, onToggleFullscreen, theme }: { user: FirebaseUser, selectedTask?: Task, isFullscreen: boolean, onToggleFullscreen: () => void, theme: any }) {
+function Timer({ user, selectedTask, isFullscreen, onToggleFullscreen, theme, onComplete }: { user: FirebaseUser | null, selectedTask?: Task, isFullscreen: boolean, onToggleFullscreen: () => void, theme: any, onComplete: (data: any) => Promise<void> }) {
   const [mode, setMode] = useState<TimerMode>('focus');
   const [timeLeft, setTimeLeft] = useState(TIMER_CONFIG.focus);
   const [isActive, setIsActive] = useState(false);
@@ -807,8 +920,7 @@ function Timer({ user, selectedTask, isFullscreen, onToggleFullscreen, theme }: 
     }
 
     if (mode === 'focus') {
-      await addDoc(collection(db, 'focus_sessions'), {
-        userId: user.uid,
+      await onComplete({
         taskId: selectedTask?.id || null,
         startTime: startTimeRef.current || new Date(),
         endTime: new Date(),
@@ -955,7 +1067,20 @@ function Timer({ user, selectedTask, isFullscreen, onToggleFullscreen, theme }: 
   );
 }
 
-function TaskList({ user, tasks, selectedTaskId, onSelectTask, ai, theme }: { user: FirebaseUser, tasks: Task[], selectedTaskId: string | null, onSelectTask: (id: string) => void, ai: GoogleGenAI, theme: any }) {
+function TaskList({ 
+  user, tasks, selectedTaskId, onSelectTask, ai, theme, 
+  onAddTask, onUpdateTask, onDeleteTask 
+}: { 
+  user: FirebaseUser | null, 
+  tasks: Task[], 
+  selectedTaskId: string | null, 
+  onSelectTask: (id: string) => void, 
+  ai: GoogleGenAI, 
+  theme: any,
+  onAddTask: (data: any) => Promise<void>,
+  onUpdateTask: (id: string, updates: any) => Promise<void>,
+  onDeleteTask: (id: string) => Promise<void>
+}) {
   const [isAdding, setIsAdding] = useState(false);
   const [newTask, setNewTask] = useState({ title: '', priority: 'medium' as Priority });
   const [isBreakingDown, setIsBreakingDown] = useState<string | null>(null);
@@ -973,14 +1098,12 @@ function TaskList({ user, tasks, selectedTaskId, onSelectTask, ai, theme }: { us
       
       if (subtasks) {
         for (const sub of subtasks) {
-          await addDoc(collection(db, 'tasks'), {
+          await onAddTask({
             title: sub,
             description: `Sub-task of: ${task.title}`,
             priority: task.priority,
             estimated_pomodoros: 1,
-            completed: false,
-            userId: user.uid,
-            createdAt: serverTimestamp()
+            completed: false
           });
         }
       }
@@ -995,14 +1118,12 @@ function TaskList({ user, tasks, selectedTaskId, onSelectTask, ai, theme }: { us
     e.preventDefault();
     if (!newTask.title.trim()) return;
 
-    await addDoc(collection(db, 'tasks'), {
+    await onAddTask({
       title: newTask.title,
       description: '',
       priority: newTask.priority,
       estimated_pomodoros: 1,
-      completed: false,
-      userId: user.uid,
-      createdAt: serverTimestamp()
+      completed: false
     });
 
     setNewTask({ title: '', priority: 'medium' });
@@ -1010,13 +1131,13 @@ function TaskList({ user, tasks, selectedTaskId, onSelectTask, ai, theme }: { us
   };
 
   const toggleComplete = async (task: Task) => {
-    await updateDoc(doc(db, 'tasks', task.id), {
+    await onUpdateTask(task.id, {
       completed: !task.completed
     });
   };
 
   const deleteTask = async (id: string) => {
-    await deleteDoc(doc(db, 'tasks', id));
+    await onDeleteTask(id);
   };
 
   return (
