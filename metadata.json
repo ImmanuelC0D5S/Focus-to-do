@@ -1,0 +1,5 @@
+{
+  "name": "Focus To-Do",
+  "description": "A productivity engine combining task management with a Pomodoro timer and focus tracking.",
+  "requestFramePermissions": []
+}

@@ -1,0 +1,56 @@
+{
+  "entities": {
+    "Task": {
+      "title": "Task",
+      "description": "A task to be completed by the user.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "description": "The title of the task." },
+        "description": { "type": "string", "description": "A detailed description of the task." },
+        "priority": { "type": "string", "enum": ["low", "medium", "high"], "description": "Priority level." },
+        "estimated_pomodoros": { "type": "integer", "description": "Estimated number of pomodoros to complete the task." },
+        "completed": { "type": "boolean", "description": "Whether the task is finished." },
+        "userId": { "type": "string", "description": "The ID of the user who owns this task." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the task was created." }
+      },
+      "required": ["title", "userId", "completed", "createdAt"]
+    },
+    "FocusSession": {
+      "title": "Focus Session",
+      "description": "A recorded focus session.",
+      "type": "object",
+      "properties": {
+        "taskId": { "type": "string", "description": "The ID of the task associated with this session (optional)." },
+        "userId": { "type": "string", "description": "The ID of the user who performed the session." },
+        "startTime": { "type": "string", "format": "date-time", "description": "When the session started." },
+        "endTime": { "type": "string", "format": "date-time", "description": "When the session ended." },
+        "durationMinutes": { "type": "integer", "description": "Duration of the session in minutes." },
+        "type": { "type": "string", "enum": ["focus", "short_break", "long_break"], "description": "Type of session." }
+      },
+      "required": ["userId", "startTime", "endTime", "durationMinutes", "type"]
+    },
+    "User": {
+      "title": "User",
+      "description": "User preferences and settings.",
+      "type": "object",
+      "properties": {
+        "themeId": { "type": "string", "description": "The ID of the selected theme." },
+        "dailyGoalHours": { "type": "number", "description": "Daily focus goal in hours." }
+      }
+    }
+  },
+  "firestore": {
+    "/tasks/{taskId}": {
+      "schema": "Task",
+      "description": "User tasks."
+    },
+    "/focus_sessions/{sessionId}": {
+      "schema": "FocusSession",
+      "description": "User focus sessions."
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User settings."
+    }
+  }
+}
